@@ -1,3 +1,0 @@
-/home/teachmain/hydra/PluginTest/build/CMakeFiles/HdPluginFinder.dir
-/home/teachmain/hydra/PluginTest/build/CMakeFiles/edit_cache.dir
-/home/teachmain/hydra/PluginTest/build/CMakeFiles/rebuild_cache.dir
