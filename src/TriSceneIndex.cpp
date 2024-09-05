@@ -45,7 +45,6 @@ HdSceneIndexPrim TriSceneIndex::GetPrim(const SdfPath &primPath) const {
                             HdRetainedTypedSampledDataSource<TfToken>::New(HdTokens->rightHanded)),
                     /* subdivisionScheme = */ HdRetainedTypedSampledDataSource<TfToken>::New(HdPrimvarRoleTokens->none),
                     /* subdivisionTags = */ nullptr,
-                    /* geomSubsets = */ nullptr,
                     /* doubleSided = */ HdRetainedTypedSampledDataSource<bool>::New(true)),
             HdPrimvarsSchemaTokens->primvars,
                 HdRetainedContainerDataSource::New(

@@ -1,9 +1,20 @@
 #include <cstddef>
+#include <cstdio>
 #include<iostream>
+#include <memory>
+#include <ostream>
+#include <pxr/base/gf/matrix4d.h>
+#include <pxr/base/gf/vec3d.h>
+#include <pxr/base/gf/vec3f.h>
+#include <pxr/base/gf/vec3i.h>
 #include <pxr/base/gf/vec4d.h>
 #include <pxr/base/tf/refBase.h>
 #include <pxr/base/tf/refPtr.h>
 #include <pxr/base/tf/token.h>
+#include <pxr/base/vt/dictionary.h>
+#include <pxr/imaging/hd/aov.h>
+#include <pxr/imaging/hd/renderBuffer.h>
+#include <pxr/imaging/hdx/renderTask.h>
 #include <pxr/imaging/hd/driver.h>
 #include <pxr/imaging/hd/mergingSceneIndex.h>
 #include <pxr/imaging/hd/renderDelegate.h>
@@ -11,14 +22,25 @@
 #include <pxr/imaging/hd/sceneIndex.h>
 #include <pxr/imaging/hd/sceneIndexObserver.h>
 #include <pxr/imaging/hd/tokens.h>
+#include <pxr/imaging/hd/types.h>
 #include <pxr/pxr.h>
 #include <pxr/usd/sdf/path.h>
 #include <pxr/usd/usd/common.h>
+#include <pxr/usd/usd/prim.h>
+#include <pxr/usd/usdGeom/camera.h>
+#include <pxr/usd/usd/primTypeInfo.h>
 #include <pxr/usd/usd/stage.h>
+#include <pxr/usd/usdGeom/tokens.h>
+#include <pxr/usd/usdGeom/xformOp.h>
 #include <ratio>
 #include "TriSceneIndex.h"
 #include "pxr/base/plug/plugin.h"
 #include "pxr/base/plug/registry.h"
+#include "pxr/base/vt/value.h"
+#include "pxr/imaging/hd/changeTracker.h"
+#include "pxr/imaging/hd/dataSource.h"
+#include "pxr/imaging/hd/repr.h"
+#include "pxr/imaging/hd/rprimCollection.h"
 #include "pxr/imaging/hf/pluginRegistry.h"
 #include "pxr/imaging/hd/rendererPluginRegistry.h"
 #include "pxr/imaging/hd/rendererPlugin.h"
@@ -38,6 +60,13 @@
 #include "pxr/imaging/hd/xformSchema.h"
 #include "pxr/imaging/hd/extentSchema.h"
 #include "pxr/imaging/hd/cameraSchema.h"
+#include "pxr/imaging/hd/sceneIndexPluginRegistry.h"
+#include "pxr/imaging/hd/sceneDelegate.h"
+#include "pxr/imaging/hd/engine.h"
+#include "pxr/imaging/hd/renderPass.h"
+#include "pxr/imaging/hd/camera.h"
+#include "pxr/imaging/hio/image.h"
+#include "pxr/imaging/hio/types.h"
 
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -60,43 +89,32 @@ void PrintTfTokenList(const std::string title, TfTokenVector list, int elementPe
     if(title.length()>39){
         return;
     }
-    std::cout << std::string(remain,'-') << title << std::string(40-remain,'-')<<'\n';
+    std::cout << std::string(remain,'-') << title << std::string(40-remain-titleLen,'-')<<'\n';
     int counter = 0;
     for(TfToken str : list){
-        
+        std::cout << str << '\n';
     }
-    
+    std::cout << "----------------------------------------\n";
 }
 
 void PrintRenderDelegateInfo(HdRenderDelegate *renderer){
-    TfTokenVector supportedRprimType = renderer -> GetSupportedRprimTypes();
-    std::cout << "Supported Rprim include:\n";
-    for(TfToken type : supportedRprimType){
-        std::cout << type << '\n';
-    }
-    std::cout << "--------------------\n";
-
-    std::cout << "Supported Sprim include:\n";
-    TfTokenVector supportedSprimType = renderer -> GetSupportedSprimTypes();
-    for(TfToken type : supportedSprimType){
-        std::cout << type << '\n';
-    }
-    std::cout << "--------------------\n";
-
-    std::cout << "Supported Bprim include:\n";
-    TfTokenVector supportedBprimType = renderer -> GetSupportedBprimTypes();
-    for(TfToken type : supportedBprimType){
-        std::cout << type << '\n';
-    }
-    std::cout << "--------------------\n";
+    PrintTfTokenList("Supported Rprim",renderer->GetSupportedRprimTypes());
+    PrintTfTokenList("Supported Bprim",renderer->GetSupportedBprimTypes());
+    PrintTfTokenList("Supported Sprim",renderer->GetSupportedSprimTypes());
+    PrintTfTokenList("Render Settings", renderer->GetRenderSettingsNamespaces());
+}
+void CameraTest(){
 }
 
 int main(){
     PlugRegistry &PlugManager = PlugRegistry::GetInstance();
     PlugManager.RegisterPlugins("/home/teachmain/usd/share/usd/examples/plugin/hdTiny/resources/plugInfo.json");
+    PlugManager.RegisterPlugins("/home/teachmain/usd/lib/usd/plugInfo.json");
+    PlugManager.RegisterPlugins("/home/teachmain/usd/plugin/usd/plugInfo.json");
 
     HfPluginDescVector hfplugin;
     HdRendererPluginRegistry &HdRenderPluginRE  = HdRendererPluginRegistry::GetInstance();
+
     HdRenderPluginRE.GetPluginDescs(&hfplugin);
     printf("Found Renderer: \n");
     for(int index=0;index<hfplugin.size();index++){
@@ -113,6 +131,8 @@ int main(){
 
     HdRenderDelegate *renderDelegate = rendererPlugin->CreateRenderDelegate();
     TF_VERIFY(renderDelegate != nullptr);
+    PrintRenderDelegateInfo(renderDelegate);
+
     HdRenderSettingDescriptorList settings = renderDelegate->GetRenderSettingDescriptors();
     
     std::cout << "------Render Settings------"<<std::endl;
@@ -121,53 +141,176 @@ int main(){
     }
     std::cout << "---------------------------"<<std::endl;
 
+    VtDictionary status = renderDelegate->GetRenderStats();
+    for(auto [key,value] : status){
+        std:: cout << key << '\t' << value << std::endl;
+    }
+
 
     HdRenderIndex *renderIndex = HdRenderIndex::New(renderDelegate, HdDriverVector(),"test");
     TF_VERIFY(renderIndex != nullptr);
 
-    std::cout << "Create renderIndex  for: "<<RendererID << std::endl;
-    if(!renderIndex->IsSprimTypeSupported(HdPrimTypeTokens->camera)){
-        std::cout << "Camera not support?" << std::endl;
-        return -1;
-    }
-
     UsdImagingStageSceneIndexRefPtr usdScene = UsdImagingStageSceneIndex::New();
     UsdStageRefPtr testStage = UsdStage::Open("/home/teachmain/Kitchen_set/Kitchen_set.usd");
+    usdScene->SetStage(testStage);
+    HdMergingSceneIndexRefPtr mergeIndex = HdMergingSceneIndex::New();
+    mergeIndex->AddInputScene(usdScene, SdfPath::AbsoluteRootPath());
 
-    HdMergingSceneIndexRefPtr mergeScene = HdMergingSceneIndex::New();
-    mergeScene->AddInputScene(usdScene, SdfPath::AbsoluteRootPath());
 
-    HdRetainedSceneIndexRefPtr retainScene = HdRetainedSceneIndex::New();
-    mergeScene->AddInputScene(retainScene, SdfPath::AbsoluteRootPath());
 
-    HdRetainedSceneIndex::AddedPrimEntry tmpEntry;
-    tmpEntry.primPath = SdfPath("/camera");
-    tmpEntry.primType = HdPrimTypeTokens->camera;
-    tmpEntry.dataSource = HdCameraSchema::BuildRetained(
-        HdCameraSchema::BuildProjectionDataSource(HdCameraSchemaTokens->perspective),
-        HdRetainedTypedSampledDataSource<float>::New(1.0f),
-        HdRetainedTypedSampledDataSource<float>::New(1.0f),
-        HdRetainedTypedSampledDataSource<float>::New(0.0f),
-        HdRetainedTypedSampledDataSource<float>::New(0.0f),
-        HdRetainedTypedSampledDataSource<float>::New(50.0f),
-        HdRetainedTypedSampledDataSource<GfVec2f>::New({0.001f,1000000.0f}),
-        nullptr,
-        HdRetainedTypedSampledDataSource<float>::New(21.0f),
-        HdRetainedTypedSampledDataSource<float>::New(1000.0f),
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr
+
+    GfMatrix4d cameraXform;
+    cameraXform.SetLookAt(GfVec3d(0,0,1),GfVec3d(0,0,0),GfVec3d(0,1,0));
+
+    HdRetainedSceneIndex::AddedPrimEntry cameraEntry;
+    cameraEntry.primPath = SdfPath("/camera");
+    cameraEntry.primType = HdPrimTypeTokens->camera;
+    cameraEntry.dataSource = HdRetainedContainerDataSource::New(
+        HdCameraSchemaTokens->camera,
+        HdCameraSchema::BuildRetained(
+            HdCameraSchema::BuildProjectionDataSource(HdCameraSchemaTokens->perspective),
+            HdRetainedTypedSampledDataSource<float>::New(100.0f),
+            HdRetainedTypedSampledDataSource<float>::New(100.0f),
+            HdRetainedTypedSampledDataSource<float>::New(0.0f),
+            HdRetainedTypedSampledDataSource<float>::New(0.0f),
+            HdRetainedTypedSampledDataSource<float>::New(50.0f),
+            HdRetainedTypedSampledDataSource<GfVec2f>::New({0.001f,1000000.0f}),
+            nullptr,
+            HdRetainedTypedSampledDataSource<float>::New(21.0f),
+            HdRetainedTypedSampledDataSource<float>::New(1000.0f),
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr
+        ),
+        HdXformSchemaTokens->xform,
+        HdXformSchema::BuildRetained(
+            HdRetainedTypedSampledDataSource<GfMatrix4d>::New(cameraXform),
+            HdRetainedTypedSampledDataSource<bool>::New(false)
+        )
+    );
+    HdSceneIndexPrim prim = {
+        HdPrimTypeTokens->mesh,
+    };
+    HdRetainedSceneIndex::AddedPrimEntry primEntry;
+    primEntry.primPath = SdfPath("/quad");
+    primEntry.primType = HdPrimTypeTokens->mesh; 
+    primEntry.dataSource = HdRetainedContainerDataSource::New(
+
+        HdMeshSchemaTokens->mesh,
+        HdMeshSchema::BuildRetained(
+            HdMeshTopologySchema::BuildRetained(
+                HdRetainedTypedSampledDataSource<VtArray<int>>::New({4}),
+                HdRetainedTypedSampledDataSource<VtArray<int>>::New({0,1,2,3}),
+                nullptr,
+                HdRetainedTypedSampledDataSource<TfToken>::New(HdTokens->rightHanded)),
+            HdRetainedTypedSampledDataSource<TfToken>::New(HdPrimvarRoleTokens->none),
+            nullptr,
+            HdRetainedTypedSampledDataSource<bool>::New(true)),
+
+        HdPrimvarsSchemaTokens->primvars,
+        HdRetainedContainerDataSource::New(
+            HdTokens->points,
+            HdPrimvarSchema::BuildRetained(
+                HdRetainedTypedSampledDataSource<VtArray<GfVec3f>>::New({{-1,-1,0},{1,-1,0},{1,1,0},{-1,1,0}}),
+                nullptr,
+                nullptr,
+                HdRetainedTypedSampledDataSource<TfToken>::New(HdPrimvarSchemaTokens->vertex),
+                HdRetainedTypedSampledDataSource<TfToken>::New(HdPrimvarSchemaTokens->point))),
+
+        HdPurposeSchemaTokens->purpose,
+        HdPurposeSchema::BuildRetained(
+            HdRetainedTypedSampledDataSource<TfToken>::New(HdRenderTagTokens->geometry)),
+
+        HdVisibilitySchemaTokens->visibility,
+        HdVisibilitySchema::BuildRetained(
+                HdRetainedTypedSampledDataSource<bool>::New(true)),
+
+        HdXformSchemaTokens->xform,
+        HdXformSchema::BuildRetained(
+            HdRetainedTypedSampledDataSource<GfMatrix4d>::New(GfMatrix4d(1)),
+            HdRetainedTypedSampledDataSource<bool>::New(false)),
+            HdExtentSchemaTokens->extent,
+            HdExtentSchema::BuildRetained(
+                HdRetainedTypedSampledDataSource<GfVec3d>::New(GfVec3d(-1,-1,0)),
+                HdRetainedTypedSampledDataSource<GfVec3d>::New(GfVec3d(1,1,0)))
     );
 
-    renderIndex->InsertSceneIndex(mergeScene,SdfPath::AbsoluteRootPath());
-    retainScene->AddPrims({tmpEntry});
+    HdRetainedSceneIndexRefPtr retainScene = HdRetainedSceneIndex::New();
+    mergeIndex->AddInputScene(retainScene,SdfPath::AbsoluteRootPath());
 
-    usdScene->SetStage(testStage);
+    renderIndex->InsertSceneIndex(mergeIndex,SdfPath::AbsoluteRootPath());
 
+    HdContainerDataSourceHandle data = 
+    HdRetainedContainerDataSource::New(
+        HdPrimTypeTokens->renderBuffer,
+        HdRenderBufferSchema::BuildRetained(
+            HdRetainedTypedSampledDataSource<GfVec3i>::New({1920,1080,1}),
+            HdRetainedTypedSampledDataSource<HdFormat>::New(HdFormat::HdFormatUNorm8Vec4),
+            HdRetainedTypedSampledDataSource<bool>::New(false)));
+    
+    
+    HdRetainedSceneIndex::AddedPrimEntry bufferEntry;
+    bufferEntry.primPath = SdfPath("/buffer");
+    bufferEntry.primType = HdPrimTypeTokens->renderBuffer;
+    bufferEntry.dataSource = data;
+
+    retainScene->AddPrims({cameraEntry,primEntry});
+    retainScene->AddPrims({bufferEntry});
+
+
+    HdRenderBuffer *rb = static_cast<HdRenderBuffer*>(
+        renderIndex->GetBprim(HdPrimTypeTokens->renderBuffer,SdfPath("/buffer")));
+
+    HdTaskSharedPtrVector tasks = {};
+
+    HdSceneDelegate *scene_delegate = renderIndex->GetSceneDelegateForRprim(SdfPath("/quad"));
+    HdDirtyBits bits = HdRenderBuffer::DirtyDescription;
+    HdRenderParam *param = renderDelegate->GetRenderParam();
+
+    HdRenderPassAovBinding aovbinding;
+    aovbinding.aovName = HdAovTokens->color;
+    aovbinding.clearValue = VtValue(GfVec4f(1.0f, 0.0f, 1.0f, 1.0f));
+    aovbinding.renderBufferId = SdfPath("/buffer");
+    aovbinding.renderBuffer = rb;
+
+    HdRenderPassSharedPtr renderpass = renderDelegate->CreateRenderPass(renderIndex, HdRprimCollection(HdTokens->geometry,HdReprSelector(HdReprTokens->hull)));
+    HdRenderPassStateSharedPtr render_pass_state = renderDelegate->CreateRenderPassState();
+    render_pass_state->SetAovBindings({aovbinding});
+
+    HdCamera *cameraOBJ =static_cast<HdCamera *>( renderIndex->GetSprim(HdPrimTypeTokens->camera, SdfPath("/camera")));
+
+    render_pass_state->SetCamera(cameraOBJ);
+
+    renderIndex->SyncAll(&tasks,nullptr); 
+
+    int times = 0;
+    do{
+        times++;
+        renderpass->Sync();
+        renderpass->Execute({render_pass_state}, {HdRenderTagTokens->geometry});
+    }while(!rb->IsConverged());
+
+    std::cout << times << std::endl;
+    
+    rb->Resolve();
+    HioImage::StorageSpec storage;
+    storage.width = rb->GetWidth();
+    storage.height = rb->GetHeight();
+    storage.format = HioFormat::HioFormatUNorm8Vec4;
+    storage.flipped = true;
+    storage.data = rb->Map();
+    VtDictionary metadata;
+    HioImageSharedPtr image = HioImage::OpenForWriting("test.png");
+    if (image) {
+        image->Write(storage, metadata);
+    }
+
+    rb->Unmap();
 
     return 0; 
 }
