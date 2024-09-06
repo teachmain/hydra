@@ -41,6 +41,7 @@
 #include "pxr/imaging/hd/dataSource.h"
 #include "pxr/imaging/hd/repr.h"
 #include "pxr/imaging/hd/rprimCollection.h"
+#include "pxr/imaging/hdx/renderSetupTask.h"
 #include "pxr/imaging/hf/pluginRegistry.h"
 #include "pxr/imaging/hd/rendererPluginRegistry.h"
 #include "pxr/imaging/hd/rendererPlugin.h"
@@ -160,7 +161,7 @@ int main(){
 
 
     GfMatrix4d cameraXform;
-    cameraXform.SetLookAt(GfVec3d(0,0,1),GfVec3d(0,0,0),GfVec3d(0,1,0));
+    cameraXform.SetLookAt(GfVec3d(0,0,10),GfVec3d(0,0,-1),GfVec3d(0,1,0));
 
     HdRetainedSceneIndex::AddedPrimEntry cameraEntry;
     cameraEntry.primPath = SdfPath("/camera");
@@ -190,7 +191,7 @@ int main(){
         HdXformSchemaTokens->xform,
         HdXformSchema::BuildRetained(
             HdRetainedTypedSampledDataSource<GfMatrix4d>::New(cameraXform),
-            HdRetainedTypedSampledDataSource<bool>::New(false)
+            HdRetainedTypedSampledDataSource<bool>::New(true)
         )
     );
     HdSceneIndexPrim prim = {
@@ -259,17 +260,14 @@ int main(){
     bufferEntry.primType = HdPrimTypeTokens->renderBuffer;
     bufferEntry.dataSource = data;
 
-    retainScene->AddPrims({cameraEntry,primEntry});
-    retainScene->AddPrims({bufferEntry});
+    retainScene->AddPrims({cameraEntry,primEntry,bufferEntry});
 
 
     HdRenderBuffer *rb = static_cast<HdRenderBuffer*>(
         renderIndex->GetBprim(HdPrimTypeTokens->renderBuffer,SdfPath("/buffer")));
 
-    HdTaskSharedPtrVector tasks = {};
 
     HdSceneDelegate *scene_delegate = renderIndex->GetSceneDelegateForRprim(SdfPath("/quad"));
-    HdDirtyBits bits = HdRenderBuffer::DirtyDescription;
     HdRenderParam *param = renderDelegate->GetRenderParam();
 
     HdRenderPassAovBinding aovbinding;
@@ -281,19 +279,32 @@ int main(){
     HdRenderPassSharedPtr renderpass = renderDelegate->CreateRenderPass(renderIndex, HdRprimCollection(HdTokens->geometry,HdReprSelector(HdReprTokens->hull)));
     HdRenderPassStateSharedPtr render_pass_state = renderDelegate->CreateRenderPassState();
     render_pass_state->SetAovBindings({aovbinding});
+    render_pass_state->SetViewport(GfVec4d(0,0,1920,1080));
 
     HdCamera *cameraOBJ =static_cast<HdCamera *>( renderIndex->GetSprim(HdPrimTypeTokens->camera, SdfPath("/camera")));
 
     render_pass_state->SetCamera(cameraOBJ);
 
-    renderIndex->SyncAll(&tasks,nullptr); 
+    HdxRenderTaskParams renderparam;
+    renderparam.aovBindings.push_back(aovbinding);
+    renderparam.camera = SdfPath("/camera");
+    renderparam.viewport = GfVec4d(0,0,1920,1080);
+
+    auto rendertask = 
+    std::make_shared<HdxRenderTask>(scene_delegate,SdfPath("/rendertask"));
+    HdTaskContext ct;
+    ct[HdTokens->params] = renderparam;
+
+
+    HdTaskSharedPtrVector tasks = {rendertask};
+    HdEngine engine;
+
 
     int times = 0;
     do{
         times++;
-        renderpass->Sync();
-        renderpass->Execute({render_pass_state}, {HdRenderTagTokens->geometry});
-    }while(!rb->IsConverged());
+        engine.Execute(renderIndex,&tasks);
+    }while(!rendertask->IsConverged());
 
     std::cout << times << std::endl;
     
